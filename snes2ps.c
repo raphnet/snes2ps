@@ -37,8 +37,85 @@
 
 #define SNES_GET_DATA() (SNES_DATA_PIN & SNES_DATA_BIT)
 
+/*	PSX data : (MSb first)
+		Left    Down  Right  Up    Start  1   1   Select
+		Square  X     O      Tri.  R1     L1  R2  L2
+*/
+#define PSX_LEFT		0x8000
+#define PSX_DOWN		0x4000
+#define PSX_RIGHT		0x2000
+#define PSX_UP			0x1000
+#define PSX_START		0x0800
+#define PSX_SELECT		0x0100
+#define PSX_SQUARE		0x0080
+#define PSX_X			0x0040
+#define PSX_O			0x0020
+#define PSX_TRIANGLE	0x0010
+#define PSX_R1			0x0008
+#define PSX_L1			0x0004
+#define PSX_R2			0x0002
+#define PSX_L2			0x0001
+
+/*	SNES data, in the received order.
+		B Y Select Start
+		Up Down Left Right
+		A X L R
+		1 1 1 1
+ */
+#define SNES_B		0x8000
+#define SNES_Y		0x4000
+#define SNES_SELECT	0x2000
+#define SNES_START	0x1000
+#define SNES_UP		0x0800
+#define SNES_DOWN	0x0400
+#define SNES_LEFT	0x0200
+#define SNES_RIGHT	0x0100
+#define SNES_A		0x0080
+#define SNES_X		0x0040
+#define SNES_L		0x0020
+#define SNES_R		0x0010
+
+struct map_ent {
+	unsigned short s; // Snes bit
+	unsigned short p; // PSX bit
+};
+
+#define ALT_MAPPING_SNES_BIT	SNES_SELECT
+
+static struct map_ent defaultMap[] = {
+		{ SNES_B, 		PSX_X },
+		{ SNES_Y, 		PSX_SQUARE },
+		{ SNES_SELECT,	PSX_SELECT },
+		{ SNES_START,	PSX_START },
+		{ SNES_UP,		PSX_UP },
+		{ SNES_DOWN,	PSX_DOWN },
+		{ SNES_LEFT,	PSX_LEFT },
+		{ SNES_RIGHT,	PSX_RIGHT },
+		{ SNES_A,		PSX_O },
+		{ SNES_X,		PSX_TRIANGLE },
+		{ SNES_R,		PSX_R1 },
+		{ SNES_L,		PSX_L1 },
+		{ 0, 0 },
+};
+
+static struct map_ent quangMap[] = {
+		{ SNES_B, 		PSX_O },
+		{ SNES_Y, 		PSX_X },
+		{ SNES_SELECT,	PSX_SELECT },
+		{ SNES_START,	PSX_START },
+		{ SNES_UP,		PSX_UP },
+		{ SNES_DOWN,	PSX_DOWN },
+		{ SNES_LEFT,	PSX_LEFT },
+		{ SNES_RIGHT,	PSX_RIGHT },
+		{ SNES_A,		PSX_R2 },
+		{ SNES_X,		PSX_TRIANGLE },
+		{ SNES_R,		PSX_R1 },
+		{ SNES_L,		PSX_SQUARE },
+		{ 0, 0 },
+};
 
 
+static struct map_ent *g_cur_map = defaultMap;
 static unsigned char state = ST_IDLE;
 static volatile unsigned char psxbuf[2];
 static unsigned char snesbuf[2];
@@ -95,6 +172,7 @@ ISR(SPI_STC_vect)
 				case ST_DONE:
 					SPDR = 0xff;
 					state = ST_IDLE;
+					kickTransfer = 1;
 					break;
 
 				default:
@@ -131,7 +209,7 @@ static void snesUpdate(void)
 			SNES_CLOCK_LOW();
 
 			tmp <<= 1;
-			if (!SNES_GET_DATA())
+			if (SNES_GET_DATA())
 				tmp |= 1;
 
 			_delay_us(6);
@@ -144,72 +222,18 @@ static void snesUpdate(void)
 }
 
 
-/*	PSX data : (MSb first)
-		Left    Down  Right  Up    Start  1   1   Select
-		Square  X     O      Tri.  R1     L1  R2  L2
-*/
-#define PSX_LEFT		0x8000
-#define PSX_DOWN		0x4000
-#define PSX_RIGHT		0x2000
-#define PSX_UP			0x1000
-#define PSX_START		0x0800
-#define PSX_SELECT		0x0100
-#define PSX_SQUARE		0x0080
-#define PSX_X			0x0040
-#define PSX_O			0x0020
-#define PSX_TRIANGLE	0x0010
-#define PSX_R1			0x0008
-#define PSX_L1			0x0004
-#define PSX_R2			0x0002
-#define PSX_L2			0x0001
-
-/*	SNES data, in the received order.
-		B Y Select Start
-		Up Down Left Right
-		A X L R
-		1 1 1 1
- */
-#define SNES_B		0x8000
-#define SNES_Y		0x4000
-#define SNES_SELECT	0x2000
-#define SNES_START	0x1000
-#define SNES_UP		0x0800
-#define SNES_DOWN	0x0400
-#define SNES_LEFT	0x0200
-#define SNES_RIGHT	0x0100
-#define SNES_A		0x0080
-#define SNES_X		0x0040
-#define SNES_L		0x0020
-#define SNES_R		0x0010
-
-
-
 unsigned short snes2psx(unsigned short snesbits)
 {
 	unsigned short psxval;
 	int i;
-	struct {
-		unsigned short s, p;
-	} map[] = {
-		{ SNES_B, 		PSX_X },
-		{ SNES_Y, 		PSX_SQUARE },
-		{ SNES_SELECT,	PSX_SELECT },
-		{ SNES_START,	PSX_START },
-		{ SNES_UP,		PSX_UP },
-		{ SNES_DOWN,	PSX_DOWN },
-		{ SNES_LEFT,	PSX_LEFT },
-		{ SNES_RIGHT,	PSX_RIGHT },
-		{ SNES_A,		PSX_O },
-		{ SNES_X,		PSX_TRIANGLE },
-		{ SNES_R,		PSX_R1 },
-		{ SNES_L,		PSX_L1 },
-		{ 0, 0 },
-	};
+	struct map_ent *map = g_cur_map;
 
-	psxval = 0x0600; // start with always1 bits set
+	/* Start with a ALL ones message and 
+	 * clear the bits when needed. */
+	psxval = 0xffff;
 	for (i=0; map[i].s; i++) {
-		if (snesbits & map[i].s)
-				psxval |= map[i].p;
+		if (!(snesbits & map[i].s))
+			psxval &= ~(map[i].p);
 	}		
 
 	return psxval;
@@ -268,10 +292,10 @@ int main(void)
 
 	snesUpdate(); // inits buffer
 
-	// temp hack: Use
-	// a single input which simulates a button
-	DDRC &= ~(1<<5);
-	PORTC |= (1<<5);
+	if ( ((snesbuf[0]<<8 | snesbuf[1]) & 
+				ALT_MAPPING_SNES_BIT) == 0) {
+		g_cur_map = quangMap;
+	}
 	
 	sei();
 	while(1)
