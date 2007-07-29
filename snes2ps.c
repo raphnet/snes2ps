@@ -115,7 +115,7 @@ static struct map_ent quangMap[] = {
 };
 
 
-static struct map_ent *g_cur_map = defaultMap;
+static struct map_ent *g_cur_map = quangMap;
 static unsigned char state = ST_IDLE;
 static volatile unsigned char psxbuf[2];
 static unsigned char snesbuf[2];
@@ -139,18 +139,33 @@ ISR(SPI_STC_vect)
 
 	cmd = SPDR;
 
+	if (state == ST_IDLE && cmd != CMD_BEGIN_01) {
+		/* First byte is no 0x01? This is not a message for us (probably memory card)
+		 *
+		 * Ignore all other bytes until Slave Select is deasserted.
+		 */
+		while (0 == (PINB & (1<<2))) { 	
+			// Make sure we dont pull the bus low. No need
+			// to synchronize this write with each byte transferred byte...
+
+			SPDR = 0x00; // dont pull the bus low (sends 0xff)
+		}
+
+		return;
+	}
+
 	switch (cmd)
 	{
 		case CMD_BEGIN_01:
 			state = ST_READY;
-			SPDR = DEVICE_ID;
+			SPDR = 0xff ^ DEVICE_ID;
 			ack();
 			break;
 
 		case CMD_GET_DATA_42:
 			if (state == ST_READY)
 			{
-				SPDR = REP_DATA_START_5A;
+				SPDR = 0xff ^ REP_DATA_START_5A;
 				state = ST_SEND_BUF0;
 				ack();
 			}
@@ -160,17 +175,17 @@ ISR(SPI_STC_vect)
 			switch (state)
 			{
 				case ST_SEND_BUF0:
-					SPDR = psxbuf[0];
+					SPDR = 0xff ^ psxbuf[0];
 					state = ST_SEND_BUF1;
 					ack();
 					break;
 				case ST_SEND_BUF1:
-					SPDR = psxbuf[1];
+					SPDR = 0xff ^ psxbuf[1];
 					state = ST_DONE;
 					ack();
 					break;
 				case ST_DONE:
-					SPDR = 0xff;
+					SPDR = 0x00; // dont pull the bus low (send 0xff)
 					state = ST_IDLE;
 					kickTransfer = 1;
 					break;
@@ -184,7 +199,7 @@ ISR(SPI_STC_vect)
 
 			// fallthrough
 		default:
-			SPDR = 0xff; // what could we send?
+			SPDR = 0x00; // dont pull the bus low (sends 0xff)
 			state = ST_IDLE;
 			break;
 	}
@@ -258,7 +273,7 @@ int main(void)
 	 * Data setup on leading edge (falling in this case) (CPHA)
 	 * */
 	SPCR = (1<<SPIE) | (1<<SPE) | (1<<DORD) | (1<<CPOL) | (1<<CPHA);
-	SPDR = 0xff;
+	SPDR = 0xff ^ 0xff;
 
 	// Miso output
 	DDRB = (1<<PORTB4);
@@ -294,7 +309,7 @@ int main(void)
 
 	if ( ((snesbuf[0]<<8 | snesbuf[1]) & 
 				ALT_MAPPING_SNES_BIT) == 0) {
-		g_cur_map = quangMap;
+		g_cur_map = defaultMap;
 	}
 	
 	sei();
