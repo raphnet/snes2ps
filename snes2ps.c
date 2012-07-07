@@ -1,3 +1,21 @@
+/*
+    snes2psx: SNES controller to Playstation adapter
+    Copyright (C) 2012 Raphael Assenat <raph@raphnet.net>
+
+    This program is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program.  If not, see <http://www.gnu.org/licenses/>.
+*/
+
 #include <string.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -28,6 +46,11 @@
 #define SNES_DATA_DDR   DDRC
 #define SNES_DATA_PIN   PINC
 #define SNES_DATA_BIT   (1<<3)
+
+#define PSX_ACK_PORT	PORTC
+#define PSX_ACK_DDR		DDRC
+#define PSX_ACK_PIN		PINC
+#define PSX_ACK_BIT		(1<<0)
 
 /********* IO pins manipulation macros **********/
 #define SNES_LATCH_LOW()    do { SNES_LATCH_PORT &= ~(SNES_LATCH_BIT); } while(0)
@@ -115,7 +138,7 @@ static struct map_ent quangMap[] = {
 };
 
 
-static struct map_ent *g_cur_map = quangMap;
+static struct map_ent *g_cur_map = defaultMap;
 static unsigned char state = ST_IDLE;
 static volatile unsigned char psxbuf[2];
 static unsigned char snesbuf[2];
@@ -123,13 +146,16 @@ static volatile char kickTransfer = 0;
 
 static void ack()
 {
-	// pull acknowledge
-	DDRC |= 0x01;
+	_delay_us(1);
 
-	_delay_us(4);
+	// pull acknowledge
+	PSX_ACK_PORT &= ~PSX_ACK_BIT;
+	PSX_ACK_DDR	|= PSX_ACK_BIT;
+
+	_delay_us(3);
 
 	// release acknowledge
-	DDRC &= ~0x01;
+	PSX_ACK_DDR &= ~PSX_ACK_BIT;
 }
 
 ISR(SPI_STC_vect)
@@ -145,10 +171,12 @@ ISR(SPI_STC_vect)
 		 * Ignore all other bytes until Slave Select is deasserted.
 		 */
 		while (0 == (PINB & (1<<2))) { 	
-			// Make sure we dont pull the bus low. No need
-			// to synchronize this write with each byte transferred byte...
+			// Make sure we dont pull the bus low.
 
-			SPDR = 0x00; // dont pull the bus low (sends 0xff)
+			if (SPSR & (1<<SPIF)) {
+				cmd = SPDR;
+				SPDR = 0x00; // dont pull the bus low (sends 0xff)
+			}
 		}
 
 		return;
@@ -246,6 +274,7 @@ unsigned short snes2psx(unsigned short snesbits)
 	/* Start with a ALL ones message and 
 	 * clear the bits when needed. */
 	psxval = 0xffff;
+
 	for (i=0; map[i].s; i++) {
 		if (!(snesbits & map[i].s))
 			psxval &= ~(map[i].p);
@@ -258,12 +287,50 @@ unsigned short snes2psx(unsigned short snesbits)
 
 int main(void)
 {
-	/* Configure /SS and MOSI as inputs, MISO
-	 * as output(later) */
-	DDRB = 0;
+	/* PORT C
+	 *    Name          Type
+	 * 0: PSX ACT       Emulated OC
+	 * 1: NC            OUT 0
+	 * 2: NC            OUT 0
+	 * 3: SNES DATA     IN - PU
+	 *
+	 * 4: SNES LATCH    OUT 0
+	 * 5: SNES CLK      OUT 0
+	 * 6: reset
+	 */
+	DDRC = 0xF6;
+	PORTC = 0x08;
 
-/* Enable pullup on SS. */
-//	PORTB = (1<<PORTB2);
+	/* PORT B
+	 * 
+	 *          Name                    Type
+	 * 0, 1, 2: Attention               Input   (The 3 pins are shorted together)
+	 * 3      : CMD (MOSI) from PSX     Input
+	 * 4      : DATA (MISO) to PSX      Output 0
+	 * 5      : PSX CLK (SCK) from PSX  Input
+	 * 6      : XTAL
+	 * 7      : XTAL
+	 */
+	PORTB = 0;
+	DDRB = 0x10;
+
+	/* PORTD 
+	 *
+	 *    Name         Type
+	 * 0: USB          OUT 0
+	 * 1: USB          OUT 0
+	 * 2: USB          OUT 0
+	 * 3: NC           OUT 0
+	 * 4: VCC          OUT 1
+	 * 5: NC           OUT 1
+	 * 6: NC           OUT 1
+	 * 7: NC           OUT 1
+	 *
+	 */
+	PORTD = 0xFF;
+	DDRD  = 0xFF;
+
+
 
 	/* Enable interrupt (SPIE)
 	 * Enable SPI (SPE)
@@ -275,13 +342,10 @@ int main(void)
 	SPCR = (1<<SPIE) | (1<<SPE) | (1<<DORD) | (1<<CPOL) | (1<<CPHA);
 	SPDR = 0xff ^ 0xff;
 
-	// Miso output
-	DDRB = (1<<PORTB4);
-
 	/* configure acknowledge pin. Simulate an open-collector
 	 * by changing it's direction. */
-	PORTC &= ~0x01;	// low
-	DDRC &= ~0x01;	// input
+	PSX_ACK_PORT &= ~PSX_ACK_BIT;
+	PSX_ACK_DDR &= ~PSX_ACK_BIT;
 
 	// buttons are active low and reserved bits stay high.
 	psxbuf[0] = 0xff;
@@ -309,7 +373,7 @@ int main(void)
 
 	if ( ((snesbuf[0]<<8 | snesbuf[1]) & 
 				ALT_MAPPING_SNES_BIT) == 0) {
-		g_cur_map = defaultMap;
+		g_cur_map = quangMap;
 	}
 	
 	sei();
