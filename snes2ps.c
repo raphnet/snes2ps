@@ -328,7 +328,7 @@ int main(void)
 	 *
 	 */
 	PORTD = 0xFF;
-	DDRD  = 0xFF;
+	DDRD  = 0;
 
 
 
