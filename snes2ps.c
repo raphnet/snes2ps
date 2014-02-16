@@ -1,6 +1,6 @@
 /*
     snes2psx: SNES controller to Playstation adapter
-    Copyright (C) 2012 Raphael Assenat <raph@raphnet.net>
+    Copyright (C) 2012-2014 Raphael Assenat <raph@raphnet.net>
 
     This program is free software: you can redistribute it and/or modify
     it under the terms of the GNU General Public License as published by
@@ -142,7 +142,8 @@ static struct map_ent *g_cur_map = defaultMap;
 static unsigned char state = ST_IDLE;
 static volatile unsigned char psxbuf[2];
 static unsigned char snesbuf[2];
-static volatile char kickTransfer = 0;
+
+#define CHIP_SELECT_ACTIVE()	(0 == (PINB & (1<<2)))
 
 static void ack()
 {
@@ -170,7 +171,7 @@ ISR(SPI_STC_vect)
 		 *
 		 * Ignore all other bytes until Slave Select is deasserted.
 		 */
-		while (0 == (PINB & (1<<2))) { 	
+		while (CHIP_SELECT_ACTIVE()) {
 			// Make sure we dont pull the bus low.
 
 			if (SPSR & (1<<SPIF)) {
@@ -198,7 +199,7 @@ ISR(SPI_STC_vect)
 				ack();
 			}
 			break;
-		
+
 		case 0x00:
 			switch (state)
 			{
@@ -215,13 +216,12 @@ ISR(SPI_STC_vect)
 				case ST_DONE:
 					SPDR = 0x00; // dont pull the bus low (send 0xff)
 					state = ST_IDLE;
-					kickTransfer = 1;
 					break;
 
 				default:
 					ok = 0;
 			}
-		
+
 			if (ok)
 				break;
 
@@ -271,14 +271,14 @@ unsigned short snes2psx(unsigned short snesbits)
 	int i;
 	struct map_ent *map = g_cur_map;
 
-	/* Start with a ALL ones message and 
+	/* Start with a ALL ones message and
 	 * clear the bits when needed. */
 	psxval = 0xffff;
 
 	for (i=0; map[i].s; i++) {
 		if (!(snesbits & map[i].s))
 			psxval &= ~(map[i].p);
-	}		
+	}
 
 	return psxval;
 }
@@ -302,7 +302,7 @@ int main(void)
 	PORTC = 0x08;
 
 	/* PORT B
-	 * 
+	 *
 	 *          Name                    Type
 	 * 0, 1, 2: Attention               Input   (The 3 pins are shorted together)
 	 * 3      : CMD (MOSI) from PSX     Input
@@ -314,7 +314,7 @@ int main(void)
 	PORTB = 0;
 	DDRB = 0x10;
 
-	/* PORTD 
+	/* PORTD
 	 *
 	 *    Name         Type
 	 * 0: USB          OUT 0
@@ -369,27 +369,28 @@ int main(void)
 	// LATCH is Active HIGH
 	SNES_LATCH_PORT &= ~(SNES_LATCH_BIT);
 
-	snesUpdate(); // inits buffer
+	snesUpdate();
 
-	if ( ((snesbuf[0]<<8 | snesbuf[1]) & 
+	if ( ((snesbuf[0]<<8 | snesbuf[1]) &
 				ALT_MAPPING_SNES_BIT) == 0) {
 		g_cur_map = quangMap;
 	}
-	
+
 	sei();
 	while(1)
 	{
 		unsigned short psxbits;
 
-		while (!kickTransfer) 
-			{ /* do nothing */	}
+		if (!CHIP_SELECT_ACTIVE()) {
+			SPDR = 0x00;
+			state = ST_IDLE;
+		}
 
-		kickTransfer = 0;
 		snesUpdate();
 
 		psxbits = snes2psx((snesbuf[0]<<8) | snesbuf[1]);
 
-		psxbuf[0] = psxbits >> 8;	
+		psxbuf[0] = psxbits >> 8;
 		psxbuf[1] = psxbits & 0xff;
 	}
 
