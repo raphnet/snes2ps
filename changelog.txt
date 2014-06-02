@@ -1,3 +1,6 @@
+v1.2 - June 1, 2014
+    - Improved game compatibility
+
 v1.1 - March 2014
 	- Fix default mapping on PS2
 

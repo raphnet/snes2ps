@@ -166,70 +166,75 @@ ISR(SPI_STC_vect)
 
 	cmd = SPDR;
 
-	if (state == ST_IDLE && cmd != CMD_BEGIN_01) {
-		/* First byte is no 0x01? This is not a message for us (probably memory card)
-		 *
-		 * Ignore all other bytes until Slave Select is deasserted.
-		 */
-		while (CHIP_SELECT_ACTIVE()) {
-			// Make sure we dont pull the bus low.
-
-			if (SPSR & (1<<SPIF)) {
-				cmd = SPDR;
-				SPDR = 0x00; // dont pull the bus low (sends 0xff)
-			}
-		}
-
-		return;
-	}
-
-	switch (cmd)
+	switch(state)
 	{
-		case CMD_BEGIN_01:
-			state = ST_READY;
-			SPDR = 0xff ^ DEVICE_ID;
-			ack();
-			break;
+		case ST_IDLE: // Expecting 0x01
+			if (cmd != CMD_BEGIN_01) {
+				/* First byte is no 0x01? This is not a message for us (probably memory card)
+				 *
+				 * Ignore all other bytes until Slave Select is deasserted.
+				 */
+				while (CHIP_SELECT_ACTIVE()) {
+					// Make sure we dont pull the bus low.
 
-		case CMD_GET_DATA_42:
-			if (state == ST_READY)
-			{
-				SPDR = 0xff ^ REP_DATA_START_5A;
-				state = ST_SEND_BUF0;
+					if (SPSR & (1<<SPIF)) {
+						cmd = SPDR;
+						SPDR = 0x00; // dont pull the bus low (sends 0xff)
+					}
+				}
+			}
+			else {
+				// Prepare the Device id (0x41)
+				SPDR = 0xff ^ DEVICE_ID;
+				state = ST_READY;
 				ack();
 			}
 			break;
 
-		case 0x00:
-			switch (state)
-			{
-				case ST_SEND_BUF0:
-					SPDR = 0xff ^ psxbuf[0];
-					state = ST_SEND_BUF1;
-					ack();
-					break;
-				case ST_SEND_BUF1:
-					SPDR = 0xff ^ psxbuf[1];
-					state = ST_DONE;
-					ack();
-					break;
-				case ST_DONE:
-					SPDR = 0x00; // dont pull the bus low (send 0xff)
-					state = ST_IDLE;
-					break;
+		case ST_READY: // Expecting 0x42
+			if (cmd == CMD_GET_DATA_42) {
+				SPDR = 0xff ^ REP_DATA_START_5A;
+				state = ST_SEND_BUF0;
+				ack();
 
-				default:
-					ok = 0;
 			}
+			break;
 
-			if (ok)
+			// Based on Playstation.txt, I initially understood that the Playstation
+			// would always send 0x00 when reading the button status and wrote code
+			// that checked the received values.
+			//
+			// However, Einhander sends 0x40:
+			//  Game...: 0x01, 0x42, 0x00, 0x40,   0x00
+			//  Adapter: 0xFF, 0x41, 0x5a, dat[0], dat[1]
+			//
+			// And rollcage sends a 0x01:
+			//  Game...: 0x01, 0x42, 0x01, 0x00,   0x00
+			//  Adapter: 0xFF, 0x41, 0x5a, dat[0], dat[1]
+			//
+			// The unexpected values above prevented the games from working, so
+			// I now treat the transmitted values during button status as "don't care"
+			// rather than "expecting 0".
+			//
+			// This seems to be working well.
+			//
+		case ST_SEND_BUF0: // start of data 0x5a sent
+				SPDR = 0xff ^ psxbuf[0];
+				state = ST_SEND_BUF1;
+				ack();
 				break;
 
-			// fallthrough
-		default:
-			SPDR = 0x00; // dont pull the bus low (sends 0xff)
-			state = ST_IDLE;
-			break;
+		case ST_SEND_BUF1: // psxbuf[0] sent
+				SPDR = 0xff ^ psxbuf[1];
+				state = ST_DONE;
+				ack();
+				break;
+
+		case ST_DONE: // psxbuf[1] sent
+				SPDR = 0x00; // dont pull the bus low (send 0xff)
+				state = ST_IDLE;
+				break;
+
 	}
 
 }
