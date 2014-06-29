@@ -1,3 +1,6 @@
+v1.3 - June 29, 2014
+    - Implemented 5 new button mappings.
+
 v1.2 - June 1, 2014
     - Improved game compatibility
 

@@ -15,7 +15,6 @@
     You should have received a copy of the GNU General Public License
     along with this program.  If not, see <http://www.gnu.org/licenses/>.
 */
-
 #include <string.h>
 #include <avr/io.h>
 #include <avr/interrupt.h>
@@ -105,7 +104,7 @@ struct map_ent {
 
 #define ALT_MAPPING_SNES_BIT	SNES_SELECT
 
-static struct map_ent defaultMap[] = {
+static struct map_ent type1_mapping[] = {
 		{ SNES_B, 		PSX_X },
 		{ SNES_Y, 		PSX_SQUARE },
 		{ SNES_SELECT,	PSX_SELECT },
@@ -121,7 +120,7 @@ static struct map_ent defaultMap[] = {
 		{ 0, 0 },
 };
 
-static struct map_ent quangMap[] = {
+static struct map_ent type2_mapping[] = {
 		{ SNES_B, 		PSX_O },
 		{ SNES_Y, 		PSX_X },
 		{ SNES_SELECT,	PSX_SELECT },
@@ -137,8 +136,87 @@ static struct map_ent quangMap[] = {
 		{ 0, 0 },
 };
 
+static struct map_ent type3_mapping[] = {
+		{ SNES_B, 		PSX_TRIANGLE },
+		{ SNES_Y, 		PSX_O },
+		{ SNES_SELECT,	PSX_SELECT },
+		{ SNES_START,	PSX_START },
+		{ SNES_UP,		PSX_UP },
+		{ SNES_DOWN,	PSX_DOWN },
+		{ SNES_LEFT,	PSX_LEFT },
+		{ SNES_RIGHT,	PSX_RIGHT },
+		{ SNES_A,		PSX_X },
+		{ SNES_X,		PSX_SQUARE },
+		{ SNES_R,		PSX_R1 },
+		{ SNES_L,		PSX_L1 },
+		{ 0, 0 },
+};
 
-static struct map_ent *g_cur_map = defaultMap;
+static struct map_ent type4_mapping[] = {
+		{ SNES_B, 		PSX_SQUARE },
+		{ SNES_Y, 		PSX_X },
+		{ SNES_SELECT,	PSX_SELECT },
+		{ SNES_START,	PSX_START },
+		{ SNES_UP,		PSX_UP },
+		{ SNES_DOWN,	PSX_DOWN },
+		{ SNES_LEFT,	PSX_LEFT },
+		{ SNES_RIGHT,	PSX_RIGHT },
+		{ SNES_A,		PSX_TRIANGLE },
+		{ SNES_X,		PSX_O },
+		{ SNES_R,		PSX_R1 },
+		{ SNES_L,		PSX_L1 },
+		{ 0, 0 },
+};
+
+static struct map_ent type5_mapping[] = {
+		{ SNES_B, 		PSX_O },
+		{ SNES_Y, 		PSX_TRIANGLE },
+		{ SNES_SELECT,	PSX_SELECT },
+		{ SNES_START,	PSX_START },
+		{ SNES_UP,		PSX_UP },
+		{ SNES_DOWN,	PSX_DOWN },
+		{ SNES_LEFT,	PSX_LEFT },
+		{ SNES_RIGHT,	PSX_RIGHT },
+		{ SNES_A,		PSX_SQUARE },
+		{ SNES_X,		PSX_X },
+		{ SNES_R,		PSX_L1 }, // L/R swapped
+		{ SNES_L,		PSX_R1 },
+		{ 0, 0 },
+};
+
+static struct map_ent type6_mapping[] = { // Type 1 with L2/R2
+		{ SNES_B, 		PSX_X },
+		{ SNES_Y, 		PSX_SQUARE },
+		{ SNES_SELECT,	PSX_SELECT },
+		{ SNES_START,	PSX_START },
+		{ SNES_UP,		PSX_UP },
+		{ SNES_DOWN,	PSX_DOWN },
+		{ SNES_LEFT,	PSX_LEFT },
+		{ SNES_RIGHT,	PSX_RIGHT },
+		{ SNES_A,		PSX_O },
+		{ SNES_X,		PSX_TRIANGLE },
+		{ SNES_R,		PSX_R2 },
+		{ SNES_L,		PSX_L2 },
+		{ 0, 0 },
+};
+
+static struct map_ent type7_mapping[] = { // Type 1 with rotated directions for right-hand arcade stick steering
+		{ SNES_B, 		PSX_X },
+		{ SNES_Y, 		PSX_SQUARE },
+		{ SNES_SELECT,	PSX_SELECT },
+		{ SNES_START,	PSX_START },
+		{ SNES_UP,		PSX_DOWN },
+		{ SNES_DOWN,	PSX_UP },
+		{ SNES_LEFT,	PSX_RIGHT },
+		{ SNES_RIGHT,	PSX_LEFT },
+		{ SNES_A,		PSX_O },
+		{ SNES_X,		PSX_TRIANGLE },
+		{ SNES_R,		PSX_L1 },
+		{ SNES_L,		PSX_R1 },
+		{ 0, 0 },
+};
+
+static struct map_ent *g_cur_map = type1_mapping;
 static unsigned char state = ST_IDLE;
 static volatile unsigned char psxbuf[2];
 static unsigned char snesbuf[2];
@@ -162,7 +240,6 @@ static void ack()
 ISR(SPI_STC_vect)
 {
 	unsigned char cmd;
-	char ok = 1;
 
 	cmd = SPDR;
 
@@ -234,7 +311,6 @@ ISR(SPI_STC_vect)
 				SPDR = 0x00; // dont pull the bus low (send 0xff)
 				state = ST_IDLE;
 				break;
-
 	}
 
 }
@@ -269,7 +345,6 @@ static void snesUpdate(void)
 
 }
 
-
 unsigned short snes2psx(unsigned short snesbits)
 {
 	unsigned short psxval;
@@ -287,8 +362,6 @@ unsigned short snes2psx(unsigned short snesbits)
 
 	return psxval;
 }
-
-
 
 int main(void)
 {
@@ -376,9 +449,29 @@ int main(void)
 
 	snesUpdate();
 
-	if ( ((snesbuf[0]<<8 | snesbuf[1]) &
-				ALT_MAPPING_SNES_BIT) == 0) {
-		g_cur_map = quangMap;
+	switch (0xFFFF ^ (snesbuf[0]<<8 | snesbuf[1]))
+	{
+		case SNES_START:
+			g_cur_map = type1_mapping;
+			break;
+		case SNES_SELECT:
+			g_cur_map = type2_mapping;
+			break;
+		case SNES_A:
+			g_cur_map = type3_mapping;
+			break;
+		case SNES_B:
+			g_cur_map = type4_mapping;
+			break;
+		case SNES_X:
+			g_cur_map = type5_mapping;
+			break;
+		case SNES_Y:
+			g_cur_map = type6_mapping;
+			break;
+		case SNES_L:
+			g_cur_map = type7_mapping;
+			break;
 	}
 
 	sei();
@@ -398,6 +491,4 @@ int main(void)
 		psxbuf[0] = psxbits >> 8;
 		psxbuf[1] = psxbits & 0xff;
 	}
-
 }
-
